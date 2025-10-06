@@ -50,9 +50,13 @@ import {
   TrendingUp as TrendingUpIcon,
   Inventory as InventoryIcon,
   ShoppingBasket as BasketIcon,
+  Remove as RemoveIcon,
+  AddCircle as AddCircleIcon,
 } from '@mui/icons-material';
-import { Purchase, PurchaseItem } from '@/types';
+import { Purchase, PurchaseItem, Supplier, Product, CreatePurchase, CreatePurchaseItem } from '@/types';
 import { purchaseService } from '@/services/purchases';
+import { supplierService } from '@/services/suppliers';
+import { productService } from '@/services/products';
 
 const Purchases: React.FC = () => {
   // State for purchases data
@@ -67,9 +71,23 @@ const Purchases: React.FC = () => {
   // State for modals
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [purchaseDetails, setPurchaseDetails] = useState<(Purchase & { items: PurchaseItem[] }) | null>(null);
   const [selectedRows, setSelectedRows] = useState<GridRowSelectionModel>([]);
+
+  // State for purchase order creation
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selectedSupplierId, setSelectedSupplierId] = useState<number>(0);
+  const [orderItems, setOrderItems] = useState<Array<{
+    productId: number;
+    product?: Product;
+    quantity: number;
+    unitCost: number;
+    total: number;
+  }>>([]);
+  const [formErrors, setFormErrors] = useState<{[key: string]: string}>({});
 
   // State for summary data
   const [summary, setSummary] = useState({
@@ -229,6 +247,145 @@ const Purchases: React.FC = () => {
     setIsDeleteModalOpen(true);
   };
 
+  // Fetch suppliers for purchase order creation
+  const fetchSuppliers = async () => {
+    try {
+      const response = await supplierService.getAllForDropdown();
+      setSuppliers(response.data);
+    } catch (error) {
+      console.error('Error fetching suppliers:', error);
+      showNotification('Failed to fetch suppliers', 'error');
+    }
+  };
+
+  // Fetch products for purchase order creation
+  const fetchProducts = async () => {
+    try {
+      const response = await productService.getAllForDropdown();
+      setProducts(response.data);
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      showNotification('Failed to fetch products', 'error');
+    }
+  };
+
+  // Open create purchase order modal
+  const openCreateModal = async () => {
+    await fetchSuppliers();
+    await fetchProducts();
+    setSelectedSupplierId(0);
+    setOrderItems([]);
+    setFormErrors({});
+    setIsCreateModalOpen(true);
+  };
+
+  // Add item to purchase order
+  const addOrderItem = () => {
+    setOrderItems([...orderItems, {
+      productId: 0,
+      quantity: 1,
+      unitCost: 0,
+      total: 0,
+    }]);
+  };
+
+  // Remove item from purchase order
+  const removeOrderItem = (index: number) => {
+    const newItems = orderItems.filter((_, i) => i !== index);
+    setOrderItems(newItems);
+  };
+
+  // Update order item
+  const updateOrderItem = (index: number, field: string, value: any) => {
+    const newItems = [...orderItems];
+    newItems[index] = { ...newItems[index], [field]: value };
+    
+    // If product is selected, update product info and calculate total
+    if (field === 'productId') {
+      const selectedProduct = products.find(p => p.id === value);
+      newItems[index].product = selectedProduct;
+      newItems[index].unitCost = selectedProduct?.price || 0;
+    }
+    
+    // Calculate total when quantity or unit cost changes
+    if (field === 'quantity' || field === 'unitCost') {
+      newItems[index].total = newItems[index].quantity * newItems[index].unitCost;
+    }
+    
+    setOrderItems(newItems);
+  };
+
+  // Calculate total purchase amount
+  const calculateTotal = () => {
+    return orderItems.reduce((sum, item) => sum + item.total, 0);
+  };
+
+  // Validate purchase order form
+  const validatePurchaseOrder = (): boolean => {
+    const errors: {[key: string]: string} = {};
+    
+    if (!selectedSupplierId) {
+      errors.supplier = 'Please select a supplier';
+    }
+    
+    if (orderItems.length === 0) {
+      errors.items = 'Please add at least one item';
+    }
+    
+    orderItems.forEach((item, index) => {
+      if (!item.productId) {
+        errors[`item_${index}_product`] = 'Please select a product';
+      }
+      if (item.quantity <= 0) {
+        errors[`item_${index}_quantity`] = 'Quantity must be greater than 0';
+      }
+      if (item.unitCost <= 0) {
+        errors[`item_${index}_cost`] = 'Unit cost must be greater than 0';
+      }
+    });
+    
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Handle create purchase order
+  const handleCreatePurchaseOrder = async () => {
+    if (!validatePurchaseOrder()) return;
+    
+    try {
+      setLoading(true);
+      const purchaseData: CreatePurchase & { items: Omit<CreatePurchaseItem, 'purchaseId'>[] } = {
+        total: calculateTotal(),
+        supplierId: selectedSupplierId,
+        userId: 1, // Current user ID (in real app, get from auth context)
+        status: 'pending',
+        items: orderItems.map(item => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitCost: item.unitCost,
+          total: item.total,
+        }))
+      };
+      
+      await purchaseService.create(purchaseData as any);
+      setIsCreateModalOpen(false);
+      await fetchPurchases();
+      await fetchSummary();
+      showNotification('Purchase order created successfully', 'success');
+    } catch (error: any) {
+      console.error('Error creating purchase order:', error);
+      showNotification(error.message || 'Failed to create purchase order', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load suppliers and products when component mounts
+  useEffect(() => {
+    fetchSuppliers();
+    fetchProducts();
+  }, []);
+
   // DataGrid columns
   const columns: GridColDef[] = [
     {
@@ -369,7 +526,7 @@ const Purchases: React.FC = () => {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={() => showNotification('Purchase order creation feature coming soon!', 'info')}
+          onClick={openCreateModal}
           size="large"
         >
           New Purchase Order
@@ -542,6 +699,210 @@ const Purchases: React.FC = () => {
           />
         </Box>
       </Card>
+
+      {/* Create Purchase Order Modal */}
+      <Dialog 
+        open={isCreateModalOpen} 
+        onClose={() => {
+          setIsCreateModalOpen(false);
+          setSelectedSupplierId(0);
+          setOrderItems([]);
+          setFormErrors({});
+        }}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box display="flex" alignItems="center" gap={2}>
+            <AddIcon />
+            Create New Purchase Order
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Box display="flex" flexDirection="column" gap={3} pt={1}>
+            {/* Supplier Selection */}
+            <FormControl fullWidth error={!!formErrors.supplier}>
+              <InputLabel>Select Supplier *</InputLabel>
+              <Select
+                value={selectedSupplierId}
+                label="Select Supplier *"
+                onChange={(e) => setSelectedSupplierId(e.target.value as number)}
+              >
+                <MenuItem value={0}>Select a supplier...</MenuItem>
+                {suppliers.map((supplier) => (
+                  <MenuItem key={supplier.id} value={supplier.id}>
+                    <Box>
+                      <Typography variant="body2" fontWeight="medium">
+                        {supplier.name}
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        {supplier.email} | {supplier.phone}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+              {formErrors.supplier && (
+                <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                  {formErrors.supplier}
+                </Typography>
+              )}
+            </FormControl>
+
+            {/* Order Items */}
+            <Box>
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                <Typography variant="h6">Order Items</Typography>
+                <Button
+                  variant="outlined"
+                  startIcon={<AddCircleIcon />}
+                  onClick={addOrderItem}
+                  size="small"
+                >
+                  Add Item
+                </Button>
+              </Box>
+
+              {formErrors.items && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {formErrors.items}
+                </Alert>
+              )}
+
+              {orderItems.map((item, index) => (
+                <Paper key={index} variant="outlined" sx={{ p: 2, mb: 2 }}>
+                  <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} sm={4}>
+                      <FormControl fullWidth error={!!formErrors[`item_${index}_product`]}>
+                        <InputLabel>Product *</InputLabel>
+                        <Select
+                          value={item.productId}
+                          label="Product *"
+                          onChange={(e) => updateOrderItem(index, 'productId', e.target.value)}
+                        >
+                          <MenuItem value={0}>Select product...</MenuItem>
+                          {products.map((product) => (
+                            <MenuItem key={product.id} value={product.id}>
+                              <Box>
+                                <Typography variant="body2">{product.name}</Typography>
+                                <Typography variant="caption" color="textSecondary">
+                                  {product.barcode} | ${product.price}
+                                </Typography>
+                              </Box>
+                            </MenuItem>
+                          ))}
+                        </Select>
+                        {formErrors[`item_${index}_product`] && (
+                          <Typography variant="caption" color="error">
+                            {formErrors[`item_${index}_product`]}
+                          </Typography>
+                        )}
+                      </FormControl>
+                    </Grid>
+
+                    <Grid item xs={6} sm={2}>
+                      <TextField
+                        label="Quantity *"
+                        type="number"
+                        value={item.quantity}
+                        onChange={(e) => updateOrderItem(index, 'quantity', parseInt(e.target.value) || 0)}
+                        error={!!formErrors[`item_${index}_quantity`]}
+                        helperText={formErrors[`item_${index}_quantity`]}
+                        fullWidth
+                        inputProps={{ min: 1 }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={2}>
+                      <TextField
+                        label="Unit Cost *"
+                        type="number"
+                        value={item.unitCost}
+                        onChange={(e) => updateOrderItem(index, 'unitCost', parseFloat(e.target.value) || 0)}
+                        error={!!formErrors[`item_${index}_cost`]}
+                        helperText={formErrors[`item_${index}_cost`]}
+                        fullWidth
+                        inputProps={{ min: 0, step: 0.01 }}
+                        InputProps={{
+                          startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                        }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={8} sm={3}>
+                      <TextField
+                        label="Total"
+                        value={`$${item.total.toFixed(2)}`}
+                        fullWidth
+                        disabled
+                        variant="outlined"
+                      />
+                    </Grid>
+
+                    <Grid item xs={4} sm={1}>
+                      <IconButton
+                        color="error"
+                        onClick={() => removeOrderItem(index)}
+                        disabled={orderItems.length === 1}
+                      >
+                        <RemoveIcon />
+                      </IconButton>
+                    </Grid>
+                  </Grid>
+                </Paper>
+              ))}
+
+              {orderItems.length === 0 && (
+                <Box textAlign="center" py={4}>
+                  <Typography color="textSecondary" gutterBottom>
+                    No items added yet
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    startIcon={<AddCircleIcon />}
+                    onClick={addOrderItem}
+                  >
+                    Add First Item
+                  </Button>
+                </Box>
+              )}
+            </Box>
+
+            {/* Order Summary */}
+            {orderItems.length > 0 && (
+              <Box>
+                <Divider sx={{ my: 2 }} />
+                <Box display="flex" justifyContent="space-between" alignItems="center">
+                  <Typography variant="h6">Total Amount:</Typography>
+                  <Typography variant="h5" color="primary" fontWeight="bold">
+                    ${calculateTotal().toFixed(2)}
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setIsCreateModalOpen(false);
+              setSelectedSupplierId(0);
+              setOrderItems([]);
+              setFormErrors({});
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleCreatePurchaseOrder}
+            disabled={loading || orderItems.length === 0}
+            startIcon={<AddIcon />}
+          >
+            Create Purchase Order
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Purchase Details Modal */}
       <Dialog 
