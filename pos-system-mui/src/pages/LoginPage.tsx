@@ -93,6 +93,18 @@ const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToRegister }) => {
               </Typography>
             </Box>
 
+            {/* Demo Credentials Banner */}
+            <Alert severity="info" sx={{ mb: 3 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                🎯 Demo Credentials (No Backend Required)
+              </Typography>
+              <Typography variant="body2" component="div">
+                <strong>Admin:</strong> admin@pos.com / admin123<br />
+                <strong>Manager:</strong> manager@pos.com / manager123<br />
+                <strong>Cashier:</strong> cashier@pos.com / cashier123
+              </Typography>
+            </Alert>
+
             {/* Error Alert */}
             {error && (
               <Alert severity="error" sx={{ mb: 3 }}>
