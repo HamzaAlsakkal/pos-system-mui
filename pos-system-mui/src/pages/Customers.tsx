@@ -225,6 +225,65 @@ const Customers: React.FC = () => {
     }
   };
 
+  // Export customers to CSV
+  const handleExportCustomers = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      
+      let customersToExport: Customer[] = [];
+      let exportType = 'all';
+      
+      // Check if we should export selected customers or all customers
+      if (selectedRows.length > 0) {
+        // Export only selected customers
+        customersToExport = customers.filter(customer => 
+          selectedRows.includes(customer.id)
+        );
+        exportType = 'selected';
+      } else {
+        // Export all customers
+        const response = await customerService.getAllForDropdown();
+        customersToExport = response.data;
+      }
+      
+      if (customersToExport.length === 0) {
+        setError('No customers found to export');
+        return;
+      }
+      
+      // Use the service export method
+      const customerIds = selectedRows.length > 0 ? selectedRows as number[] : undefined;
+      const blob = await customerService.exportToCSV(customerIds);
+      
+      // Create and download the file
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      
+      const fileName = `customers_${exportType}_${new Date().toISOString().split('T')[0]}.csv`;
+      link.setAttribute('download', fileName);
+      
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the URL object
+      URL.revokeObjectURL(url);
+      
+      const exportMessage = selectedRows.length > 0 
+        ? `Successfully exported ${customersToExport.length} selected customers to CSV file!`
+        : `Successfully exported ${customersToExport.length} customers to CSV file!`;
+      
+      setSuccess(exportMessage);
+    } catch (err: any) {
+      setError(err.message || 'Failed to export customers');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // DataGrid columns
   const columns: GridColDef[] = [
     {
@@ -395,16 +454,16 @@ const Customers: React.FC = () => {
               Refresh
             </Button>
 
-            <Button
-              variant="outlined"
-              startIcon={<ExportIcon />}
-              onClick={() => {
-                // Mock export functionality
-                setSuccess('Export feature coming soon!');
-              }}
-            >
-              Export
-            </Button>
+            <Tooltip title={selectedRows.length > 0 ? `Export ${selectedRows.length} selected customers to CSV` : "Export all customers to CSV file"}>
+              <Button
+                variant="outlined"
+                startIcon={loading ? <CircularProgress size={16} /> : <ExportIcon />}
+                onClick={handleExportCustomers}
+                disabled={loading}
+              >
+                {loading ? 'Exporting...' : `Export ${selectedRows.length > 0 ? `(${selectedRows.length})` : ''}`}
+              </Button>
+            </Tooltip>
 
             <Button
               variant="contained"

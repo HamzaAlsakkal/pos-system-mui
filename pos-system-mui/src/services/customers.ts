@@ -273,4 +273,35 @@ export const customerService = {
     
     return { data: undefined, success: true };
   },
+
+  // Export customers to CSV
+  exportToCSV: async (customerIds?: number[]): Promise<Blob> => {
+    console.log('📤 Mock Customers: Exporting to CSV', customerIds?.length ? `${customerIds.length} selected` : 'all customers');
+    await delay(300);
+    
+    let customersToExport = MOCK_CUSTOMERS;
+    
+    // Filter by IDs if provided
+    if (customerIds && customerIds.length > 0) {
+      customersToExport = MOCK_CUSTOMERS.filter(customer => 
+        customerIds.includes(customer.id)
+      );
+    }
+    
+    // Create CSV content
+    const headers = ['ID', 'Full Name', 'Email', 'Phone', 'Created Date', 'Last Updated'];
+    const csvContent = [
+      headers.join(','),
+      ...customersToExport.map(customer => [
+        customer.id,
+        `"${customer.fullName}"`,
+        `"${customer.email}"`,
+        `"${customer.phone}"`,
+        new Date(customer.createdAt).toLocaleDateString(),
+        new Date(customer.updatedAt).toLocaleDateString()
+      ].join(','))
+    ].join('\n');
+    
+    return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  },
 };

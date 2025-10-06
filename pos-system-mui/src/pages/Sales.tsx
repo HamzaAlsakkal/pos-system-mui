@@ -49,9 +49,16 @@ import {
   Payment as PaymentIcon,
   TrendingUp as TrendingUpIcon,
   ShoppingCart as CartIcon,
+  Remove as RemoveIcon,
+  AddCircle as AddCircleIcon,
+  CreditCard as CreditCardIcon,
+  PhoneAndroid as PhoneIcon,
+  LocalAtm as CashIcon,
 } from '@mui/icons-material';
-import { Sale, SaleItem } from '@/types';
+import { Sale, SaleItem, Customer, Product, CreateSale, CreateSaleItem } from '@/types';
 import { saleService } from '@/services/sales';
+import { customerService } from '@/services/customers';
+import { productService } from '@/services/products';
 
 const Sales: React.FC = () => {
   // State for sales data
@@ -66,9 +73,25 @@ const Sales: React.FC = () => {
   // State for modals
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isPOSModalOpen, setIsPOSModalOpen] = useState(false);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [saleDetails, setSaleDetails] = useState<(Sale & { items: SaleItem[] }) | null>(null);
   const [selectedRows, setSelectedRows] = useState<GridRowSelectionModel>([]);
+
+  // State for POS sale creation
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number>(0);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'mobile'>('cash');
+  const [cartItems, setCartItems] = useState<Array<{
+    productId: number;
+    product?: Product;
+    quantity: number;
+    unitPrice: number;
+    total: number;
+  }>>([]);
+  const [productSearch, setProductSearch] = useState('');
+  const [formErrors, setFormErrors] = useState<{[key: string]: string}>({});
 
   // State for summary data
   const [summary, setSummary] = useState({
@@ -238,6 +261,169 @@ const Sales: React.FC = () => {
     setIsDeleteModalOpen(true);
   };
 
+  // Fetch customers for POS
+  const fetchCustomers = async () => {
+    try {
+      const response = await customerService.getAllForDropdown();
+      setCustomers(response.data);
+    } catch (error) {
+      console.error('Error fetching customers:', error);
+      showNotification('Failed to fetch customers', 'error');
+    }
+  };
+
+  // Fetch products for POS
+  const fetchProducts = async () => {
+    try {
+      const response = await productService.getAllForDropdown();
+      setProducts(response.data);
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      showNotification('Failed to fetch products', 'error');
+    }
+  };
+
+  // Open POS modal
+  const openPOSModal = async () => {
+    await fetchCustomers();
+    await fetchProducts();
+    setSelectedCustomerId(0);
+    setPaymentMethod('cash');
+    setCartItems([]);
+    setProductSearch('');
+    setFormErrors({});
+    setIsPOSModalOpen(true);
+  };
+
+  // Add product to cart
+  const addToCart = (product: Product) => {
+    const existingItemIndex = cartItems.findIndex(item => item.productId === product.id);
+    
+    if (existingItemIndex !== -1) {
+      // Increase quantity if product already in cart
+      const newItems = [...cartItems];
+      newItems[existingItemIndex].quantity += 1;
+      newItems[existingItemIndex].total = newItems[existingItemIndex].quantity * newItems[existingItemIndex].unitPrice;
+      setCartItems(newItems);
+    } else {
+      // Add new item to cart
+      setCartItems([...cartItems, {
+        productId: product.id,
+        product: product,
+        quantity: 1,
+        unitPrice: product.price,
+        total: product.price,
+      }]);
+    }
+    setProductSearch(''); // Clear search after adding
+  };
+
+  // Remove item from cart
+  const removeFromCart = (index: number) => {
+    const newItems = cartItems.filter((_, i) => i !== index);
+    setCartItems(newItems);
+  };
+
+  // Update cart item quantity
+  const updateCartQuantity = (index: number, quantity: number) => {
+    if (quantity <= 0) {
+      removeFromCart(index);
+      return;
+    }
+    
+    const newItems = [...cartItems];
+    newItems[index].quantity = quantity;
+    newItems[index].total = quantity * newItems[index].unitPrice;
+    setCartItems(newItems);
+  };
+
+  // Update cart item price
+  const updateCartPrice = (index: number, price: number) => {
+    const newItems = [...cartItems];
+    newItems[index].unitPrice = price;
+    newItems[index].total = newItems[index].quantity * price;
+    setCartItems(newItems);
+  };
+
+  // Calculate total sale amount
+  const calculateSaleTotal = () => {
+    return cartItems.reduce((sum, item) => sum + item.total, 0);
+  };
+
+  // Validate POS sale
+  const validatePOSSale = (): boolean => {
+    const errors: {[key: string]: string} = {};
+    
+    if (!selectedCustomerId) {
+      errors.customer = 'Please select a customer';
+    }
+    
+    if (cartItems.length === 0) {
+      errors.cart = 'Please add at least one item to cart';
+    }
+    
+    cartItems.forEach((item, index) => {
+      if (item.quantity <= 0) {
+        errors[`item_${index}_quantity`] = 'Quantity must be greater than 0';
+      }
+      if (item.unitPrice <= 0) {
+        errors[`item_${index}_price`] = 'Price must be greater than 0';
+      }
+    });
+    
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Process sale
+  const processSale = async () => {
+    if (!validatePOSSale()) return;
+    
+    try {
+      setLoading(true);
+      const saleData: CreateSale & { items: Omit<CreateSaleItem, 'saleId'>[] } = {
+        total: calculateSaleTotal(),
+        userId: 1, // Current user ID (in real app, get from auth context)
+        customerId: selectedCustomerId,
+        paymentMethod: paymentMethod,
+        status: 'completed', // POS sales are immediately completed
+        items: cartItems.map(item => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          total: item.total,
+        }))
+      };
+      
+      await saleService.create(saleData as any);
+      setIsPOSModalOpen(false);
+      await fetchSales();
+      await fetchSummary();
+      showNotification(`Sale completed! Total: $${calculateSaleTotal().toFixed(2)}`, 'success');
+    } catch (error: any) {
+      console.error('Error processing sale:', error);
+      showNotification(error.message || 'Failed to process sale', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Clear cart
+  const clearCart = () => {
+    setCartItems([]);
+  };
+
+  // Update button click handler
+  useEffect(() => {
+    fetchCustomers();
+    fetchProducts();
+  }, []);
+
+  // Update button click to use openPOSModal
+  const handleNewSaleClick = () => {
+    openPOSModal();
+  };
+
   // DataGrid columns
   const columns: GridColDef[] = [
     {
@@ -388,7 +574,7 @@ const Sales: React.FC = () => {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={() => showNotification('POS system feature coming soon!', 'info')}
+          onClick={handleNewSaleClick}
           size="large"
         >
           New Sale
@@ -561,6 +747,323 @@ const Sales: React.FC = () => {
           />
         </Box>
       </Card>
+
+      {/* POS Sale Creation Modal */}
+      <Dialog 
+        open={isPOSModalOpen} 
+        onClose={() => {
+          setIsPOSModalOpen(false);
+          setSelectedCustomerId(0);
+          setCartItems([]);
+          setProductSearch('');
+          setFormErrors({});
+        }}
+        maxWidth="xl"
+        fullWidth
+        PaperProps={{
+          sx: { height: '90vh' }
+        }}
+      >
+        <DialogTitle>
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Box display="flex" alignItems="center" gap={2}>
+              <CartIcon />
+              Point of Sale System
+            </Box>
+            <Box display="flex" alignItems="center" gap={2}>
+              <Chip
+                label={`Items: ${cartItems.length}`}
+                color="primary"
+                variant="outlined"
+              />
+              <Chip
+                label={`Total: $${calculateSaleTotal().toFixed(2)}`}
+                color="success"
+                variant="filled"
+              />
+            </Box>
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ p: 0 }}>
+          <Grid container sx={{ height: '100%' }}>
+            {/* Left Panel - Product Selection */}
+            <Grid item xs={12} md={7} sx={{ p: 3, borderRight: 1, borderColor: 'divider' }}>
+              <Box display="flex" flexDirection="column" gap={3} height="100%">
+                {/* Customer Selection */}
+                <FormControl fullWidth error={!!formErrors.customer}>
+                  <InputLabel>Select Customer *</InputLabel>
+                  <Select
+                    value={selectedCustomerId}
+                    label="Select Customer *"
+                    onChange={(e) => setSelectedCustomerId(e.target.value as number)}
+                  >
+                    <MenuItem value={0}>Walk-in Customer</MenuItem>
+                    {customers.map((customer) => (
+                      <MenuItem key={customer.id} value={customer.id}>
+                        <Box>
+                          <Typography variant="body2" fontWeight="medium">
+                            {customer.fullName}
+                          </Typography>
+                          <Typography variant="caption" color="textSecondary">
+                            {customer.email} | {customer.phone}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  {formErrors.customer && (
+                    <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                      {formErrors.customer}
+                    </Typography>
+                  )}
+                </FormControl>
+
+                {/* Product Search */}
+                <TextField
+                  fullWidth
+                  label="Search Products (Name or Barcode)"
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon />
+                      </InputAdornment>
+                    ),
+                  }}
+                  placeholder="Type to search products..."
+                />
+
+                {/* Products Grid */}
+                <Box flex={1} overflow="auto">
+                  <Typography variant="h6" gutterBottom>
+                    Products
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {products
+                      .filter(product => 
+                        productSearch === '' ||
+                        product.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+                        product.barcode.toLowerCase().includes(productSearch.toLowerCase())
+                      )
+                      .slice(0, 20) // Limit to first 20 results
+                      .map((product) => (
+                        <Grid item xs={12} sm={6} lg={4} key={product.id}>
+                          <Card 
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { 
+                                boxShadow: 4,
+                                transform: 'translateY(-2px)',
+                                transition: 'all 0.2s ease-in-out'
+                              }
+                            }}
+                            onClick={() => addToCart(product)}
+                          >
+                            <CardContent sx={{ p: 2 }}>
+                              <Typography variant="body2" fontWeight="medium" noWrap>
+                                {product.name}
+                              </Typography>
+                              <Typography variant="caption" color="textSecondary" display="block">
+                                {product.barcode}
+                              </Typography>
+                              <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
+                                <Typography variant="h6" color="primary">
+                                  ${product.price.toFixed(2)}
+                                </Typography>
+                                <Chip
+                                  label={`Stock: ${product.stock}`}
+                                  size="small"
+                                  color={product.stock > 10 ? 'success' : product.stock > 0 ? 'warning' : 'error'}
+                                />
+                              </Box>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      ))}
+                  </Grid>
+                </Box>
+              </Box>
+            </Grid>
+
+            {/* Right Panel - Shopping Cart */}
+            <Grid item xs={12} md={5} sx={{ p: 3, bgcolor: 'grey.50' }}>
+              <Box display="flex" flexDirection="column" gap={3} height="100%">
+                <Box display="flex" justifyContent="space-between" alignItems="center">
+                  <Typography variant="h6">Shopping Cart</Typography>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    onClick={clearCart}
+                    disabled={cartItems.length === 0}
+                  >
+                    Clear Cart
+                  </Button>
+                </Box>
+
+                {formErrors.cart && (
+                  <Alert severity="error">
+                    {formErrors.cart}
+                  </Alert>
+                )}
+
+                {/* Cart Items */}
+                <Box flex={1} overflow="auto">
+                  {cartItems.length === 0 ? (
+                    <Box textAlign="center" py={4}>
+                      <CartIcon color="disabled" sx={{ fontSize: 64, mb: 2 }} />
+                      <Typography color="textSecondary">
+                        Cart is empty. Add products to get started.
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <List sx={{ p: 0 }}>
+                      {cartItems.map((item, index) => (
+                        <Paper key={index} variant="outlined" sx={{ mb: 2 }}>
+                          <ListItem sx={{ flexDirection: 'column', alignItems: 'stretch', p: 2 }}>
+                            <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                              <Typography variant="body2" fontWeight="medium" flex={1}>
+                                {item.product?.name}
+                              </Typography>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={() => removeFromCart(index)}
+                              >
+                                <RemoveIcon />
+                              </IconButton>
+                            </Box>
+                            
+                            <Grid container spacing={1} alignItems="center">
+                              <Grid item xs={4}>
+                                <TextField
+                                  label="Qty"
+                                  type="number"
+                                  size="small"
+                                  value={item.quantity}
+                                  onChange={(e) => updateCartQuantity(index, parseInt(e.target.value) || 0)}
+                                  inputProps={{ min: 1 }}
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={4}>
+                                <TextField
+                                  label="Price"
+                                  type="number"
+                                  size="small"
+                                  value={item.unitPrice}
+                                  onChange={(e) => updateCartPrice(index, parseFloat(e.target.value) || 0)}
+                                  inputProps={{ min: 0, step: 0.01 }}
+                                  InputProps={{
+                                    startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                                  }}
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={4}>
+                                <TextField
+                                  label="Total"
+                                  value={`$${item.total.toFixed(2)}`}
+                                  size="small"
+                                  disabled
+                                  fullWidth
+                                />
+                              </Grid>
+                            </Grid>
+                          </ListItem>
+                        </Paper>
+                      ))}
+                    </List>
+                  )}
+                </Box>
+
+                {/* Payment Method */}
+                {cartItems.length > 0 && (
+                  <Box>
+                    <Typography variant="h6" gutterBottom>
+                      Payment Method
+                    </Typography>
+                    <Grid container spacing={1}>
+                      <Grid item xs={4}>
+                        <Button
+                          fullWidth
+                          variant={paymentMethod === 'cash' ? 'contained' : 'outlined'}
+                          onClick={() => setPaymentMethod('cash')}
+                          startIcon={<CashIcon />}
+                          color="success"
+                        >
+                          Cash
+                        </Button>
+                      </Grid>
+                      <Grid item xs={4}>
+                        <Button
+                          fullWidth
+                          variant={paymentMethod === 'card' ? 'contained' : 'outlined'}
+                          onClick={() => setPaymentMethod('card')}
+                          startIcon={<CreditCardIcon />}
+                          color="primary"
+                        >
+                          Card
+                        </Button>
+                      </Grid>
+                      <Grid item xs={4}>
+                        <Button
+                          fullWidth
+                          variant={paymentMethod === 'mobile' ? 'contained' : 'outlined'}
+                          onClick={() => setPaymentMethod('mobile')}
+                          startIcon={<PhoneIcon />}
+                          color="info"
+                        >
+                          Mobile
+                        </Button>
+                      </Grid>
+                    </Grid>
+                  </Box>
+                )}
+
+                {/* Total and Checkout */}
+                {cartItems.length > 0 && (
+                  <Box>
+                    <Divider sx={{ mb: 2 }} />
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                      <Typography variant="h5">Total:</Typography>
+                      <Typography variant="h4" color="primary" fontWeight="bold">
+                        ${calculateSaleTotal().toFixed(2)}
+                      </Typography>
+                    </Box>
+                    <Button
+                      variant="contained"
+                      color="success"
+                      size="large"
+                      fullWidth
+                      onClick={processSale}
+                      disabled={loading || cartItems.length === 0}
+                      startIcon={<ReceiptIcon />}
+                    >
+                      Complete Sale
+                    </Button>
+                  </Box>
+                )}
+              </Box>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
+          <Button 
+            onClick={() => {
+              setIsPOSModalOpen(false);
+              setSelectedCustomerId(0);
+              setCartItems([]);
+              setProductSearch('');
+              setFormErrors({});
+            }}
+            size="large"
+          >
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Sale Details Modal */}
       <Dialog 
