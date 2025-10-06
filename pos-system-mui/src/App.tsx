@@ -9,6 +9,7 @@ import Users from '@/pages/Users';
 import Categories from '@/pages/Categories';
 import Products from '@/pages/Products';
 import Customers from '@/pages/Customers';
+import Suppliers from '@/pages/Suppliers';
 import AuthPage from '@/pages/AuthPage';
 import ChangePasswordPage from '@/pages/ChangePasswordPage';
 
@@ -41,7 +42,7 @@ function App() {
                       <Route path="/categories" element={<Categories />} />
                       <Route path="/products" element={<Products />} />
                       <Route path="/customers" element={<Customers />} />
-                      <Route path="/suppliers" element={<div>Suppliers Page Coming Soon</div>} />
+                      <Route path="/suppliers" element={<Suppliers />} />
                       <Route path="/sales" element={<div>Sales Page Coming Soon</div>} />
                       <Route path="/purchases" element={<div>Purchases Page Coming Soon</div>} />
                     </Routes>
