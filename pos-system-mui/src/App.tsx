@@ -11,6 +11,7 @@ import Products from '@/pages/Products';
 import Customers from '@/pages/Customers';
 import Suppliers from '@/pages/Suppliers';
 import Sales from '@/pages/Sales';
+import Purchases from '@/pages/Purchases';
 import AuthPage from '@/pages/AuthPage';
 import ChangePasswordPage from '@/pages/ChangePasswordPage';
 
@@ -45,7 +46,7 @@ function App() {
                       <Route path="/customers" element={<Customers />} />
                       <Route path="/suppliers" element={<Suppliers />} />
                       <Route path="/sales" element={<Sales />} />
-                      <Route path="/purchases" element={<div>Purchases Page Coming Soon</div>} />
+                      <Route path="/purchases" element={<Purchases />} />
                     </Routes>
                   </Layout>
                 </ProtectedRoute>
