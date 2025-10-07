@@ -1,8 +1,12 @@
 import axios, { InternalAxiosRequestConfig, AxiosError } from 'axios';
 
+// Detect if we're in production/deployment
+const isProduction = import.meta.env.PROD || window.location.hostname !== 'localhost';
+const baseURL = isProduction ? 'https://mock-api.example.com' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
+
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
+  baseURL,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',

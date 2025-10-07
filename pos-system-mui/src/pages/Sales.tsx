@@ -116,12 +116,20 @@ const Sales: React.FC = () => {
   const fetchSales = async () => {
     try {
       setLoading(true);
+      console.log('🔄 Fetching sales data...', { page, pageSize, searchTerm, statusFilter });
       const response = await saleService.getAll(page, pageSize, searchTerm, statusFilter);
+      console.log('✅ Sales data received:', response);
       setSales(response.data);
       setTotalCount(response.total);
     } catch (error) {
-      console.error('Error fetching sales:', error);
-      showNotification('Failed to fetch sales', 'error');
+      console.error('❌ Error fetching sales:', error);
+      // Provide more detailed error information
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      showNotification(`Failed to fetch sales: ${errorMessage}`, 'error');
+      
+      // Fallback to empty data to prevent complete failure
+      setSales([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
@@ -130,10 +138,19 @@ const Sales: React.FC = () => {
   // Fetch summary data
   const fetchSummary = async () => {
     try {
+      console.log('📊 Fetching sales summary...');
       const response = await saleService.getSummary('month');
+      console.log('✅ Summary data received:', response);
       setSummary(response.data);
     } catch (error) {
-      console.error('Error fetching summary:', error);
+      console.error('❌ Error fetching summary:', error);
+      // Provide fallback summary data
+      setSummary({
+        totalSales: 0,
+        totalAmount: 0,
+        averageAmount: 0,
+        topProducts: [],
+      });
     }
   };
 
