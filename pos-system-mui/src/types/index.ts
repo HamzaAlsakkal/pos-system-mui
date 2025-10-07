@@ -50,7 +50,7 @@ export interface Sale extends BaseEntity {
   total: number;
   userId: number;
   user?: User; // Optional populated field
-  customerId: number;
+  customerId: number | null; // Allow null for walk-in customers
   customer?: Customer; // Optional populated field
   paymentMethod: 'cash' | 'card' | 'mobile';
   status: 'pending' | 'completed' | 'cancelled';
@@ -126,7 +126,7 @@ export interface CreateProduct {
 export interface CreateSale {
   total: number;
   userId: number;
-  customerId: number;
+  customerId: number | null; // Allow null for walk-in customers
   paymentMethod: 'cash' | 'card' | 'mobile';
   status: 'pending' | 'completed' | 'cancelled';
 }

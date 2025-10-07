@@ -59,6 +59,8 @@ import { Sale, SaleItem, Customer, Product, CreateSale, CreateSaleItem } from '@
 import { saleService } from '@/services/sales';
 import { customerService } from '@/services/customers';
 import { productService } from '@/services/products';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const Sales: React.FC = () => {
   // State for sales data
@@ -74,9 +76,11 @@ const Sales: React.FC = () => {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isPOSModalOpen, setIsPOSModalOpen] = useState(false);
+  const [isReceiptChoiceModalOpen, setIsReceiptChoiceModalOpen] = useState(false);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [saleDetails, setSaleDetails] = useState<(Sale & { items: SaleItem[] }) | null>(null);
   const [selectedRows, setSelectedRows] = useState<GridRowSelectionModel>([]);
+  const [pendingSaleData, setPendingSaleData] = useState<any>(null);
 
   // State for POS sale creation
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -354,9 +358,8 @@ const Sales: React.FC = () => {
   const validatePOSSale = (): boolean => {
     const errors: {[key: string]: string} = {};
     
-    if (!selectedCustomerId) {
-      errors.customer = 'Please select a customer';
-    }
+    // Customer is optional - 0 means walk-in customer
+    // No validation needed for selectedCustomerId
     
     if (cartItems.length === 0) {
       errors.cart = 'Please add at least one item to cart';
@@ -375,6 +378,90 @@ const Sales: React.FC = () => {
     return Object.keys(errors).length === 0;
   };
 
+  // Generate PDF receipt
+  const generateReceipt = async (saleData: any, shouldPrint: boolean = false) => {
+    try {
+      const pdf = new jsPDF();
+      const pageWidth = pdf.internal.pageSize.width;
+      
+      // Header
+      pdf.setFontSize(20);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Sales Receipt', pageWidth / 2, 20, { align: 'center' });
+      
+      // Store info
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text('POS System', pageWidth / 2, 35, { align: 'center' });
+      pdf.text('Date: ' + new Date().toLocaleDateString(), pageWidth / 2, 45, { align: 'center' });
+      
+      // Sale info
+      pdf.setFontSize(10);
+      pdf.text(`Sale ID: #${Date.now()}`, 20, 65);
+      
+      // Customer info
+      if (selectedCustomerId > 0) {
+        const customer = customers.find(c => c.id === selectedCustomerId);
+        if (customer) {
+          pdf.text(`Customer: ${customer.fullName}`, 20, 75);
+          pdf.text(`Phone: ${customer.phone || 'N/A'}`, 20, 85);
+        }
+      } else {
+        pdf.text('Customer: Walk-in Customer', 20, 75);
+      }
+      
+      // Items header
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Item', 20, 105);
+      pdf.text('Qty', 120, 105);
+      pdf.text('Price', 145, 105);
+      pdf.text('Total', 170, 105);
+      
+      // Items
+      pdf.setFont('helvetica', 'normal');
+      let yPosition = 115;
+      
+      cartItems.forEach((item) => {
+        const productName = item.product?.name || `Product ${item.productId}`;
+        pdf.text(productName.substring(0, 25), 20, yPosition);
+        pdf.text(item.quantity.toString(), 120, yPosition);
+        pdf.text(`$${item.unitPrice.toFixed(2)}`, 145, yPosition);
+        pdf.text(`$${item.total.toFixed(2)}`, 170, yPosition);
+        yPosition += 10;
+      });
+      
+      // Totals
+      yPosition += 10;
+      pdf.line(20, yPosition, 190, yPosition);
+      yPosition += 10;
+      
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(`Total: $${calculateSaleTotal().toFixed(2)}`, 145, yPosition);
+      
+      // Payment method
+      yPosition += 20;
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Payment Method: ${paymentMethod.toUpperCase()}`, 20, yPosition);
+      
+      // Footer
+      yPosition += 30;
+      pdf.setFontSize(8);
+      pdf.text('Thank you for your business!', pageWidth / 2, yPosition, { align: 'center' });
+      
+      // Either print or save based on user choice
+      if (shouldPrint) {
+        pdf.autoPrint();
+        window.open(pdf.output('bloburl'), '_blank');
+      } else {
+        pdf.save(`receipt-${Date.now()}.pdf`);
+      }
+      
+    } catch (error) {
+      console.error('Error generating receipt:', error);
+      showNotification('Failed to generate receipt', 'error');
+    }
+  };
+
   // Process sale
   const processSale = async () => {
     if (!validatePOSSale()) return;
@@ -384,7 +471,7 @@ const Sales: React.FC = () => {
       const saleData: CreateSale & { items: Omit<CreateSaleItem, 'saleId'>[] } = {
         total: calculateSaleTotal(),
         userId: 1, // Current user ID (in real app, get from auth context)
-        customerId: selectedCustomerId,
+        customerId: selectedCustomerId === 0 ? null : selectedCustomerId, // null for walk-in customers
         paymentMethod: paymentMethod,
         status: 'completed', // POS sales are immediately completed
         items: cartItems.map(item => ({
@@ -396,13 +483,56 @@ const Sales: React.FC = () => {
       };
       
       await saleService.create(saleData as any);
-      setIsPOSModalOpen(false);
-      await fetchSales();
-      await fetchSummary();
-      showNotification(`Sale completed! Total: $${calculateSaleTotal().toFixed(2)}`, 'success');
+      
+      // Store sale data and show choice dialog
+      setPendingSaleData(saleData);
+      setLoading(false); // Reset loading before showing dialog
+      setIsReceiptChoiceModalOpen(true);
+      
     } catch (error: any) {
       console.error('Error processing sale:', error);
       showNotification(error.message || 'Failed to process sale', 'error');
+      setLoading(false);
+    }
+  };
+
+  // Handle PDF export choice
+  const handleExportToPDF = async () => {
+    if (pendingSaleData) {
+      setLoading(true);
+      await generateReceipt(pendingSaleData, false);
+      await finalizeSale('Receipt exported to PDF');
+    }
+  };
+
+  // Handle print choice
+  const handlePrintReceipt = async () => {
+    if (pendingSaleData) {
+      setLoading(true);
+      await generateReceipt(pendingSaleData, true);
+      await finalizeSale('Receipt sent to printer');
+    }
+  };
+
+  // Finalize sale after receipt action
+  const finalizeSale = async (message: string) => {
+    try {
+      // Reset cart and form
+      setCartItems([]);
+      setSelectedCustomerId(0);
+      setPaymentMethod('cash');
+      setProductSearch('');
+      setFormErrors({});
+      
+      setIsReceiptChoiceModalOpen(false);
+      setIsPOSModalOpen(false);
+      setPendingSaleData(null);
+      
+      await fetchSales();
+      await fetchSummary();
+      showNotification(`Sale completed! Total: $${pendingSaleData?.total?.toFixed(2) || '0.00'} - ${message}`, 'success');
+    } catch (error) {
+      console.error('Error finalizing sale:', error);
     } finally {
       setLoading(false);
     }
@@ -791,10 +921,10 @@ const Sales: React.FC = () => {
               <Box display="flex" flexDirection="column" gap={3} height="100%">
                 {/* Customer Selection */}
                 <FormControl fullWidth error={!!formErrors.customer}>
-                  <InputLabel>Select Customer *</InputLabel>
+                  <InputLabel>Select Customer</InputLabel>
                   <Select
                     value={selectedCustomerId}
-                    label="Select Customer *"
+                    label="Select Customer"
                     onChange={(e) => setSelectedCustomerId(e.target.value as number)}
                   >
                     <MenuItem value={0}>Walk-in Customer</MenuItem>
@@ -1223,6 +1353,64 @@ const Sales: React.FC = () => {
             disabled={loading}
           >
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Receipt Choice Modal */}
+      <Dialog 
+        open={isReceiptChoiceModalOpen} 
+        onClose={() => {
+          setIsReceiptChoiceModalOpen(false);
+          setPendingSaleData(null);
+          setLoading(false);
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box display="flex" alignItems="center" gap={2}>
+            <ReceiptIcon />
+            Sale Completed - Choose Receipt Option
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" mb={3}>
+            Your sale has been processed successfully! How would you like to handle the receipt?
+          </Typography>
+          <Box display="flex" flexDirection="column" gap={2}>
+            <Button
+              variant="contained"
+              startIcon={<ReceiptIcon />}
+              onClick={handleExportToPDF}
+              disabled={loading}
+              size="large"
+              fullWidth
+            >
+              Export to PDF
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<ReceiptIcon />}
+              onClick={handlePrintReceipt}
+              disabled={loading}
+              size="large"
+              fullWidth
+            >
+              Print Directly
+            </Button>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setIsReceiptChoiceModalOpen(false);
+              setPendingSaleData(null);
+              setLoading(false);
+            }}
+            disabled={loading}
+          >
+            Skip Receipt
           </Button>
         </DialogActions>
       </Dialog>
